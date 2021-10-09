@@ -1,0 +1,11 @@
+data
+src/*.pyc
+src/.idea
+src/scribble*
+venv/
+results/
+models/
+demo_results/
+samples/
+auxiliary/
+__pycache__
