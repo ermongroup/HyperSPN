@@ -40,13 +40,13 @@ if __name__ == "__main__":
 
     for dataset in datasets:
         kwargs_list = [
-            (77,  5, 5, 'hyperspn', 0),
-            (77, 10, 5, 'hyperspn', 0),
-            (77, 20, 5, 'hyperspn', 0),
+            (0,  5, 5, 'hyperspn', 0),
+            (0, 10, 5, 'hyperspn', 0),
+            (0, 20, 5, 'hyperspn', 0),
 
-            (77, 5, 5, 'spn', 1e-3),
-            (77, 5, 5, 'spn', 1e-4),
-            (77, 5, 5, 'spn', 1e-5),
+            (0, 5, 5, 'spn', 1e-3),
+            (0, 5, 5, 'spn', 1e-4),
+            (0, 5, 5, 'spn', 1e-5),
         ]
 
         for kwargs_values in kwargs_list:
