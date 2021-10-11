@@ -77,9 +77,9 @@ class ExponentialFamilyArray(torch.nn.Module):
 
         # if em is switched off, we re-parametrize the expectation parameters
         # self.reparam holds the function object for this task
-        self.reparam = None
-        if not self._use_em:
-            self.reparam = self.reparam_function()
+        # self.reparam = None
+        # if not self._use_em:
+        #     self.reparam = self.reparam_function()
 
     # --------------------------------------------------------------------------------
     # The following functions need to be implemented to specify an exponential family.
@@ -406,12 +406,11 @@ class NormalArray(ExponentialFamilyArray):
         phi_project[..., self.num_dims:] += mu2
         return phi_project
 
-    def reparam_function(self):
-        def reparam(params_in):
-            mu = params_in[..., 0:self.num_dims].clone()
-            var = self.min_var + torch.sigmoid(params_in[..., self.num_dims:]) * (self.max_var - self.min_var)
-            return torch.cat((mu, var + mu**2), -1)
-        return reparam
+    # remove function wrapper to avoid pickling error
+    def reparam(self, params_in):
+        mu = params_in[..., 0:self.num_dims].clone()
+        var = self.min_var + torch.sigmoid(params_in[..., self.num_dims:]) * (self.max_var - self.min_var)
+        return torch.cat((mu, var + mu**2), -1)
 
     def sufficient_statistics(self, x):
         if len(x.shape) == 2:

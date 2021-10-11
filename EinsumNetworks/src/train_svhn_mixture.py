@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from torch import nn, optim
 from EinsumNetwork import Graph, EinsumNetwork
 import pickle
 import os
@@ -9,18 +10,25 @@ import datasets
 from PIL import Image
 from sklearn.cluster import KMeans
 
+import argparse
+
+parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+parser.add_argument('--nn', action='store_true', default=False, help="use nn")
+parser.add_argument('--run', type=int, default=0, help="run id")
+ARGS = parser.parse_args()
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 ##################################################################
 num_clusters = 100
-result_base_path = '../models/einet/svhn/'
+result_base_path = '../models/einet_%d_%u/svhn/' % (ARGS.run, ARGS.nn)
 
 num_sums = 40
 
 exponential_family = EinsumNetwork.NormalArray
 exponential_family_args = {'min_var': 1e-6, 'max_var': 0.01}
 
-num_epochs = 3
+num_epochs = 100
 batch_size = 10
 online_em_frequency = 50
 online_em_stepsize = 0.5
@@ -100,6 +108,19 @@ def compute_cluster_idx(data, cluster_means):
         cluster_idx[k] = np.argmin(np.sum((cluster_means.reshape(-1, height * width * 3) - img.reshape(1, height * width * 3)) ** 2, 1))
     return cluster_idx
 
+def reload_einet(cur_einet, model_file):
+    try:
+        load_einet = torch.load(model_file)
+        print("loaded einet")
+    except:
+        load_einet = cur_einet
+        print("new einet")
+        pass
+
+    optimizer = optim.Adam( list(load_einet.einet_layers.parameters()) , lr=1e-2, weight_decay=0.001)
+    optimizernn = optim.Adam( list(load_einet.net.parameters()) , lr=3e-4)
+
+    return load_einet, optimizer, optimizernn
 
 def train(einet, mean, train_x, valid_x, test_x, result_path):
     model_file = os.path.join(result_path, 'einet.mdl')
@@ -112,6 +133,8 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
               'valid_ll': [],
               'test_ll': [],
               'best_validation_ll': None}
+
+    einet, optimizer, optimizernn = reload_einet(einet, model_file)
 
     for epoch_count in range(num_epochs):
 
@@ -126,28 +149,33 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
 
             ll_sample = einet.forward(batch)
             log_likelihood = ll_sample.sum()
-            log_likelihood.backward()
-            einet.em_process_batch()
-        einet.em_update()
+
+            optimizernn.zero_grad()
+            optimizer.zero_grad()
+            (-log_likelihood).backward()
+            optimizernn.step()
+            optimizer.step()
+            #einet.em_process_batch()
+        #einet.em_update()
 
         ##### evaluate
-        train_ll = eval_ll(einet, mean, train_x, batch_size=batch_size)
-        valid_ll = eval_ll(einet, mean, valid_x, batch_size=batch_size)
-        test_ll = eval_ll(einet, mean, test_x, batch_size=batch_size)
+        train_ll = eval_ll(einet, mean, train_x, batch_size=batch_size).item()
+        valid_ll = eval_ll(einet, mean, valid_x, batch_size=batch_size).item()
+        test_ll = eval_ll(einet, mean, test_x, batch_size=batch_size).item()
 
         ##### store results
         record['train_ll'].append(train_ll)
         record['valid_ll'].append(valid_ll)
         record['test_ll'].append(test_ll)
 
-        pickle.dump(record, open(record_file, 'wb'))
+        print("[{}]   train LL {}   valid LL {}   test LL {}".format(epoch_count, train_ll, valid_ll, test_ll), flush=True)
 
-        print("[{}]   train LL {}   valid LL {}   test LL {}".format(epoch_count, train_ll, valid_ll, test_ll))
-
-        if record['best_validation_ll'] is None or valid_ll > record['best_validation_ll']:
+        if (record['best_validation_ll'] is None or valid_ll > record['best_validation_ll']) and not np.isnan(valid_ll):
             record['best_validation_ll'] = valid_ll
             torch.save(einet, model_file)
             Graph.write_gpickle(graph, graph_file)
+
+        pickle.dump(record, open(record_file, 'wb'))
 
         if epoch_count % 10 == 0:
             # draw some samples
@@ -163,18 +191,19 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
             img = Image.fromarray(np.round(img * 255.).astype(np.uint8))
             img.save(os.path.join(sample_dir, "samples{}.jpg".format(epoch_count)))
 
-    # We subtract the mean for the current cluster from the data (centering it at 0).
-    # Here we re-add the mean to the Gaussian means. A hacky solution at the moment...
-    einet = torch.load(model_file)
-    with torch.no_grad():
-        params = einet.einet_layers[0].ef_array.params
-        mu2 = params[..., 0:3] ** 2
-        params[..., 3:] -= mu2
-        params[..., 3:] = torch.clamp(params[..., 3:], exponential_family_args['min_var'], exponential_family_args['max_var'])
-        params[..., 0:3] += mean.reshape((width*height, 1, 1, 3)) / 255.
-        params[..., 3:] += params[..., 0:3] ** 2
-    torch.save(einet, model_file)
-
+        if epoch_count and epoch_count % 40 == 0:
+            # We subtract the mean for the current cluster from the data (centering it at 0).
+            # Here we re-add the mean to the Gaussian means. A hacky solution at the moment...
+            einet = torch.load(model_file)
+            with torch.no_grad():
+                params = einet.einet_layers[0].ef_array.params
+                mu2 = params[..., 0:3] ** 2
+                params[..., 3:] -= mu2
+                params[..., 3:] = torch.clamp(params[..., 3:], exponential_family_args['min_var'], exponential_family_args['max_var'])
+                params[..., 0:3] += mean.reshape((width*height, 1, 1, 3)) / 255.
+                params[..., 3:] += params[..., 0:3] ** 2
+            torch.save(einet, model_file)
+            einet, optimizer, optimizernn = reload_einet(einet, model_file)
 
 means, cluster_idx = get_clusters(train_x_all, num_clusters)
 
@@ -210,8 +239,10 @@ for cluster_n in range(num_clusters):
         num_input_distributions=num_sums,
         exponential_family=exponential_family,
         exponential_family_args=exponential_family_args,
+        use_em=False,
         online_em_frequency=online_em_frequency,
-        online_em_stepsize=online_em_stepsize)
+        online_em_stepsize=online_em_stepsize,
+        use_nn=ARGS.nn)
 
     print()
     print(result_path)
@@ -220,7 +251,15 @@ for cluster_n in range(num_clusters):
     einet = EinsumNetwork.EinsumNetwork(graph, args)
     einet.initialize()
     einet.to(device)
+
+    def count_parameters(model):
+        for name, param in model.named_parameters():
+            print(name)
+        param_list = [p.numel() for p in model.parameters() if p.requires_grad]
+        print(param_list)
+        return sum(param_list)
     print(einet)
+    print(count_parameters(einet))
 
     train(einet, mean, train_x, valid_x, test_x, result_path)
 

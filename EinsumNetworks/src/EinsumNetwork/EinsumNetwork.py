@@ -1,6 +1,7 @@
 from EinsumNetwork import Graph
 from EinsumNetwork.FactorizedLeafLayer import *
 from EinsumNetwork.SumLayer import *
+from torch import nn, optim
 
 class Args(object):
     """
@@ -29,7 +30,8 @@ class Args(object):
                  exponential_family_args=None,
                  use_em=True,
                  online_em_frequency=1,
-                 online_em_stepsize=0.05):
+                 online_em_stepsize=0.05,
+                 use_nn=False):
         self.num_var = num_var
         self.num_dims = num_dims
         self.num_input_distributions = num_input_distributions
@@ -42,6 +44,7 @@ class Args(object):
         self.use_em = use_em
         self.online_em_frequency = online_em_frequency
         self.online_em_stepsize = online_em_stepsize
+        self.use_nn = use_nn
 
 
 class EinsumNetwork(torch.nn.Module):
@@ -116,6 +119,16 @@ class EinsumNetwork(torch.nn.Module):
         self.einet_layers = torch.nn.ModuleList(einet_layers)
         self.em_set_hyperparams(self.args.online_em_frequency, self.args.online_em_stepsize)
 
+        latent_dim=10
+        self.net = nn.Sequential(
+            nn.Linear(8, latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, latent_dim),
+            nn.ReLU(),
+            nn.Linear(latent_dim, 40)
+        )
+        self.use_nn = self.args.use_nn
+
     def initialize(self, init_dict=None):
         """
         Initialize layers.
@@ -147,7 +160,10 @@ class EinsumNetwork(torch.nn.Module):
         input_layer = self.einet_layers[0]
         input_layer(x=x)
         for einsum_layer in self.einet_layers[1:]:
-            einsum_layer()
+            if self.use_nn:
+                einsum_layer(nn=self.net)
+            else:
+                einsum_layer()
         return self.einet_layers[-1].prob[:, :, 0]
 
     def backtrack(self, num_samples=1, class_idx=0, x=None, mode='sampling', **kwargs):
@@ -180,7 +196,7 @@ class EinsumNetwork(torch.nn.Module):
                                       reg_idx[layer],
                                       sample_idx[layer],
                                       use_evidence=(x is not None),
-                                      mode=mode,
+                                      mode=mode, nn=self.net,
                                       **kwargs)
                 dist_idx_left, dist_idx_right, reg_idx_left, reg_idx_right, layers_left, layers_right = ret
 
@@ -200,7 +216,7 @@ class EinsumNetwork(torch.nn.Module):
                                       reg_idx[layer],
                                       sample_idx[layer],
                                       use_evidence=(x is not None),
-                                      mode=mode,
+                                      mode=mode, nn=self.net if self.use_nn else None,
                                       **kwargs)
                 dist_idx_out, reg_idx_out, layers_out = ret
 

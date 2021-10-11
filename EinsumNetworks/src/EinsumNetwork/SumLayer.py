@@ -35,9 +35,9 @@ class SumLayer(Layer):
         self._online_em_counter = 0
 
         # if EM is not used, we reparametrize
-        self.reparam = None
-        if not self._use_em:
-            self.reparam = self.reparam_function()
+        # self.reparam = None
+        # if not self._use_em:
+        #     self.reparam = self.reparam_function()
 
     # --------------------------------------------------------------------------------
     # The following functions need to be implemented in derived classes.
@@ -102,6 +102,8 @@ class SumLayer(Layer):
                 self.params = torch.nn.Parameter(self.default_initializer())
             else:
                 self.params = torch.nn.Parameter(torch.randn(self.params_shape))
+                embedding_size = 8 # embedding size h=8
+                self.embedding = torch.nn.Parameter(torch.randn( list(self.params_shape[1:]) + [embedding_size]))
         elif type(initializer) == torch.Tensor:
             if initializer.shape != self.params_shape:
                 raise AssertionError("Incorrect parameter shape.")
@@ -109,7 +111,7 @@ class SumLayer(Layer):
         else:
             raise AssertionError("Unknown initializer.")
 
-    def forward(self, x=None):
+    def forward(self, x=None, nn=None):
         """
         Evaluate this SumLayer.
 
@@ -118,25 +120,38 @@ class SumLayer(Layer):
                  Here, num_dist is the vector length of vectorized sum nodes (K in the paper), and num_nodes is the
                  number of sum nodes in this layer.
         """
-        if self._use_em:
-            params = self.params
+        if nn is not None:
+            params = nn(self.embedding)
+            for d in reversed(range(len(params.shape)-1)):
+                params = params.transpose(d,d+1)
+            params = params[:self.params_shape[0]]
+            assert(params.shape == self.params_shape)
         else:
-            reparam = self.reparam(self.params)
-            params = reparam
+            params = self.params
+
+        if not self._use_em:
+            params = self.reparam(params)
         self._forward(params)
 
-    def backtrack(self, dist_idx, node_idx, sample_idx, use_evidence=False, mode='sample', **kwargs):
+    def backtrack(self, dist_idx, node_idx, sample_idx, use_evidence=False, mode='sample', nn=None, **kwargs):
         """
         Helper routine for backtracking in EiNets, see _sample(...) for details.
         """
         if mode != 'sample' and mode != 'argmax':
             raise AssertionError('Unknown backtracking mode {}'.format(mode))
 
-        if self._use_em:
-            params = self.params
+        if nn is not None:
+            params = nn(self.embedding)
+            for d in reversed(range(len(params.shape)-1)):
+                params = params.transpose(d,d+1)
+            params = params[:self.params_shape[0]]
+            assert(params.shape == self.params_shape)
         else:
-            with torch.no_grad():
-                params = self.reparam(self.params)
+            params = self.params
+
+        if not self._use_em:
+            params = self.reparam(params)
+
         return self._backtrack(dist_idx, node_idx, sample_idx, params, use_evidence, mode, **kwargs)
 
     def em_purge(self):
@@ -193,27 +208,26 @@ class SumLayer(Layer):
             self.params.data = self.params / (self.params.sum(self.normalization_dims, keepdim=True))
             self.params.grad = None
 
-    def reparam_function(self):
+    # remove function wrapper to avoid pickling error
+    def reparam(self, params_in):
         """
         Reparametrization function, transforming unconstrained parameters into valid sum-weight
         (non-negative, normalized).
         """
-        def reparam(params_in):
-            other_dims = tuple(i for i in range(len(params_in.shape)) if i not in self.normalization_dims)
+        other_dims = tuple(i for i in range(len(params_in.shape)) if i not in self.normalization_dims)
 
-            permutation = other_dims + self.normalization_dims
-            unpermutation = tuple(c for i in range(len(permutation)) for c, j in enumerate(permutation) if j == i)
+        permutation = other_dims + self.normalization_dims
+        unpermutation = tuple(c for i in range(len(permutation)) for c, j in enumerate(permutation) if j == i)
 
-            numel = functools.reduce(lambda x, y: x * y, [params_in.shape[i] for i in self.normalization_dims])
+        numel = functools.reduce(lambda x, y: x * y, [params_in.shape[i] for i in self.normalization_dims])
 
-            other_shape = tuple(params_in.shape[i] for i in other_dims)
-            params_in = params_in.permute(permutation)
-            orig_shape = params_in.shape
-            params_in = params_in.reshape(other_shape + (numel,))
-            out = softmax(params_in, -1)
-            out = out.reshape(orig_shape).permute(unpermutation)
-            return out
-        return reparam
+        other_shape = tuple(params_in.shape[i] for i in other_dims)
+        params_in = params_in.permute(permutation)
+        orig_shape = params_in.shape
+        params_in = params_in.reshape(other_shape + (numel,))
+        out = softmax(params_in, -1)
+        out = out.reshape(orig_shape).permute(unpermutation)
+        return out
 
     def project_params(self, params):
         """Currently not required."""

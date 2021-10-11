@@ -53,3 +53,9 @@ bash bashfiles/run_spn.bash ${runid} 1e-3
 bash bashfiles/run_spn.bash ${runid} 1e-4
 bash bashfiles/run_spn.bash ${runid} 1e-5
 ```
+
+```
+cd EinsumNetworks/src/
+python train_svhn_mixture.py --run=0
+python train_svhn_mixture.py --nn --run=0
+```
