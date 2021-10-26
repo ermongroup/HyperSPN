@@ -115,12 +115,15 @@ def reload_einet(cur_einet, model_file):
     except:
         load_einet = cur_einet
         print("new einet")
-        pass
 
-    optimizer = optim.Adam( list(load_einet.einet_layers.parameters()) , lr=1e-2, weight_decay=0.001)
-    optimizernn = optim.Adam( list(load_einet.net.parameters()) , lr=3e-4)
+    param_update_list = [{'params': load_einet.einet_layers.parameters(), 'lr': 1e-2, 'weight_decay': 1e-4}]
+    if ARGS.nn:
+        param_update_list.append( {'params': load_einet.net.parameters(), 'lr': 3e-4} )
+    else:
+        param_update_list.append( {'params': load_einet.net.parameters(), 'lr': 1e-3, 'weight_decay': 1e-4} )
+    optimizer = optim.Adam(param_update_list)
 
-    return load_einet, optimizer, optimizernn
+    return load_einet, optimizer
 
 def train(einet, mean, train_x, valid_x, test_x, result_path):
     model_file = os.path.join(result_path, 'einet.mdl')
@@ -134,7 +137,7 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
               'test_ll': [],
               'best_validation_ll': None}
 
-    einet, optimizer, optimizernn = reload_einet(einet, model_file)
+    einet, optimizer = reload_einet(einet, model_file)
 
     for epoch_count in range(num_epochs):
 
@@ -150,10 +153,8 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
             ll_sample = einet.forward(batch)
             log_likelihood = ll_sample.sum()
 
-            optimizernn.zero_grad()
             optimizer.zero_grad()
             (-log_likelihood).backward()
-            optimizernn.step()
             optimizer.step()
             #einet.em_process_batch()
         #einet.em_update()
@@ -203,7 +204,7 @@ def train(einet, mean, train_x, valid_x, test_x, result_path):
                 params[..., 0:3] += mean.reshape((width*height, 1, 1, 3)) / 255.
                 params[..., 3:] += params[..., 0:3] ** 2
             torch.save(einet, model_file)
-            einet, optimizer, optimizernn = reload_einet(einet, model_file)
+            einet, optimizer = reload_einet(einet, model_file)
 
 means, cluster_idx = get_clusters(train_x_all, num_clusters)
 
